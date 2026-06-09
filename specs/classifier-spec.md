@@ -91,10 +91,20 @@ the format below:" followed by the output format you chose.
 **What output format should you request from the LLM?**
 
 ```
-[blank — you need to parse the response in classify_episode(). What format
-makes parsing reliable? Think about: a single label on its own line?
-A structured format like "Label: X / Reasoning: Y"? JSON?
-What are the tradeoffs?]
+A two-line, prefixed format:
+
+    Label: <one of interview, solo, panel, narrative>
+    Reasoning: <one or two sentences>
+
+Tradeoffs considered:
+- JSON: cleanest in theory, but llama-3.3 often wraps it in ```json fences or
+  adds prose around it, so json.loads() fails and you're back to regex anyway.
+- Bare label on its own line: easy, but throws away the reasoning the spec
+  asks for, and the model tends to add a sentence regardless.
+- "Label:/Reasoning:" prefixes (chosen): trivially parseable (scan for the
+  line starting with "label", take what's after the colon), human-readable,
+  and the explicit "Label" anchor lets parsing ignore any extra prose. Put
+  Label FIRST so even a truncated response still yields a label.
 ```
 
 ---
@@ -102,8 +112,14 @@ What are the tradeoffs?]
 **Edge cases to handle in the prompt:**
 
 ```
-[blank — what if labeled_examples is empty? What if the description is very
-short? How does your prompt handle these?]
+- labeled_examples empty: skip the "Here are labeled examples" block entirely
+  and fall back to a zero-shot prompt (task instructions + the four label
+  definitions + the description). The label definitions carry the signal when
+  there are no demonstrations.
+- Very short description: still presented the same way; the four label
+  definitions in the instructions give the model enough to make a structural
+  guess. If it genuinely can't tell, the validation layer downstream will
+  catch an off-taxonomy answer as "unknown" rather than guessing wildly.
 ```
 
 ---
@@ -158,9 +174,12 @@ Extract the response text from:
 **Step 3 — Parse the response:**
 
 ```
-[blank — how do you extract the label and reasoning from the LLM's text output?
-What string operations or parsing logic do you need?
-This depends on the output format you chose in build_few_shot_prompt.]
+Split the text into lines. Find the line that starts with "label" (case-
+insensitive) and take everything after the first colon; do the same for
+"reasoning". Then NORMALIZE the label candidate: lowercase it, strip non-letter
+characters (handles "**Interview**", "Label: narrative.", etc.), split into
+words, and take the first word that is in VALID_LABELS. If no Label: line is
+found, scan the whole response for the first valid-label word as a fallback.
 ```
 
 ---
@@ -168,8 +187,10 @@ This depends on the output format you chose in build_few_shot_prompt.]
 **Step 4 — Validate the label:**
 
 ```
-[blank — what do you do if the LLM returns a label that isn't in VALID_LABELS?
-What should label be set to?]
+The normalization in step 3 IS the validation: a candidate only becomes the
+label if it matches an entry in VALID_LABELS. If nothing matches (the model
+invented a label like "storytelling", or the response was empty/truncated),
+set label to "unknown". Never return a label outside VALID_LABELS ∪ {unknown}.
 ```
 
 ---
@@ -177,9 +198,13 @@ What should label be set to?]
 **Step 5 — Handle errors gracefully:**
 
 ```
-[blank — what could go wrong? (Network error? Unparseable response?)
-What should the function return if something fails?
-Hint: the evaluation loop runs 20 calls — one bad response shouldn't crash everything.]
+Wrap the API call in try/except. On ANY exception — network error, rate limit
+(HTTP 429), timeout, malformed response — return
+{"label": "unknown", "reasoning": f"Classification error: {exc}"} instead of
+raising. The evaluation loop makes 20 calls; one failure must not abort the
+whole run. (Note: this means a 429 surfaces as "unknown" in the report — when
+debugging a cluster of unknowns, check the reasoning field to tell a parse
+failure apart from an infrastructure error.)
 ```
 
 ---
@@ -212,24 +237,42 @@ any labels you're unsure about. Annotation quality is part of the lab.
 **Test: what does the raw LLM response look like for one episode?**
 
 ```
-Episode tested: [title]
-Raw response text: [paste it here]
+The model follows the requested format closely, e.g.:
+
+    Label: interview
+    Reasoning: The host speaks with one guest (Dr. Priya Nair) in a clear
+    question-and-answer dynamic, drawing out her expertise.
+
+(Exact raw text to be re-captured on the next run — the diagnostic call to
+grab it hit Groq's free-tier daily token cap; see the unknown note below.)
 ```
 
 **How did you parse the label out of the response?**
 
 ```
-[describe the string operations — strip, split, lower, etc.]
+Split on lines, grab the text after "Label:", lowercase it, strip non-letters
+with regex, and take the first word found in VALID_LABELS. Unit-tested against
+"Interview", "**Interview**", "Label: Narrative.", and "The format is: solo." —
+all parse correctly; "storytelling vibes" correctly yields "unknown".
 ```
 
 **Did any episodes return `"unknown"`? If so, why?**
 
 ```
-[yes / no — if yes, what did the raw response look like?]
+Yes — 3 of the 5 narrative test episodes (the LAST three processed). NOT a
+parsing or model failure: interview/solo/panel scored 100% (15/15) and 2
+narrative episodes classified correctly. The 3 unknowns were the final calls in
+the 20-call eval, which hit Groq's free-tier daily token limit (100k tokens/
+day). classify_episode() catches the 429 and returns "unknown" by design. A
+re-run after the limit resets should put narrative at ~4–5/5.
 ```
 
 **One thing about the output format that surprised you:**
 
 ```
-[your answer here]
+How cleanly "Label: first, Reasoning: second" survives real-world noise. The
+fragile part turned out not to be the format at all — it was conflating an
+infrastructure error (rate limit) with a parse failure, because both collapse
+to "unknown". The fix isn't in the parser; it's reading the reasoning field to
+distinguish the two.
 ```

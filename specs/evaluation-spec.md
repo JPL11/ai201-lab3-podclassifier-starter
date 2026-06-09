@@ -44,8 +44,9 @@ Returns the fraction of predictions that exactly match the ground truth.
 **Formula:**
 
 ```
-[blank — write out the accuracy formula in plain English.
- What counts as "correct"? What do you divide by?]
+accuracy = (number of predictions that exactly equal the ground-truth label
+in the same position) / (total number of predictions). A prediction is
+"correct" only on an exact string match (predicted == truth).
 ```
 
 ---
@@ -53,10 +54,10 @@ Returns the fraction of predictions that exactly match the ground truth.
 **Step-by-step logic:**
 
 ```
-[blank — describe the steps your code will take.
- 1. ...
- 2. ...
- 3. ...]
+1. If ground_truth is empty, return 0.0 (avoid divide-by-zero).
+2. Walk predictions and ground_truth together with zip(), counting how many
+   pairs are equal.
+3. Divide that count by len(ground_truth) and return the float.
 ```
 
 ---
@@ -64,7 +65,8 @@ Returns the fraction of predictions that exactly match the ground truth.
 **Edge case — what if both lists are empty?**
 
 ```
-[blank — what should the function return? Why?]
+Return 0.0. There are no correct predictions and dividing by zero is undefined,
+so 0.0 is the safe, meaningful answer (no measured accuracy).
 ```
 
 ---
@@ -75,7 +77,11 @@ Returns the fraction of predictions that exactly match the ground truth.
 predictions  = ["interview", "solo", "panel", "interview"]
 ground_truth = ["interview", "solo", "solo",  "narrative"]
 
-[blank — what does compute_accuracy() return for these inputs? Show your work.]
+Position 0: interview == interview  ✓
+Position 1: solo      == solo        ✓
+Position 2: panel     != solo        ✗
+Position 3: interview != narrative   ✗
+correct = 2, total = 4  →  2/4 = 0.5
 ```
 
 ---
@@ -113,8 +119,11 @@ A `dict` keyed by label. Each value is a dict with three keys:
 **What does "correct" mean for a given class?**
 
 ```
-[blank — be precise. When does an episode count as correctly classified
- for the "interview" class, for example?]
+For class C, an episode is "correct" when its GROUND-TRUTH label is C AND the
+prediction also equals C. Grouping is by ground truth, so a wrong prediction
+(e.g. truth=panel, pred=interview) counts against panel's accuracy, never
+interview's. (Predicting C when the truth is something else is a different
+class's error — it doesn't help class C's score.)
 ```
 
 ---
@@ -122,7 +131,10 @@ A `dict` keyed by label. Each value is a dict with three keys:
 **What does "total" mean for a given class?**
 
 ```
-[blank — is "total" the total number of predictions, or something more specific?]
+The number of episodes whose GROUND-TRUTH label is C — i.e. how many real C
+episodes exist in the test set. Not the number of times C was predicted. This
+is the denominator: "of all the true C episodes, how many did we get right?"
+(This is recall per class.)
 ```
 
 ---
@@ -130,12 +142,14 @@ A `dict` keyed by label. Each value is a dict with three keys:
 **Step-by-step logic:**
 
 ```
-[blank — describe the steps your code will take.
- 1. Initialize ...
- 2. Loop over ...
- 3. For each pair (predicted, truth) ...
- 4. After the loop ...
- 5. Return ...]
+1. Initialize a dict: {label: {"correct": 0, "total": 0, "accuracy": 0.0}}
+   for every label in VALID_LABELS.
+2. Loop over (pred, truth) pairs with zip().
+3. For each pair, if truth is a valid label: increment stats[truth]["total"],
+   and if pred == truth also increment stats[truth]["correct"].
+4. After the loop, set each class's "accuracy" = correct / total, or 0.0 when
+   total == 0.
+5. Return the dict.
 ```
 
 ---
@@ -143,8 +157,9 @@ A `dict` keyed by label. Each value is a dict with three keys:
 **Edge case — what if a class has no examples in ground_truth (total == 0)?**
 
 ```
-[blank — what should accuracy be set to? Why?
- Hint: look at the docstring in evaluate.py.]
+Set accuracy to 0.0 (and leave correct/total at 0). Dividing by zero is
+undefined, and there's nothing to be right about, so 0.0 is the convention the
+evaluate.py docstring specifies.
 ```
 
 ---
@@ -155,14 +170,18 @@ A `dict` keyed by label. Each value is a dict with three keys:
 predictions  = ["interview", "interview", "solo", "panel", "panel"]
 ground_truth = ["interview", "solo",      "solo", "panel", "narrative"]
 
-[blank — fill in the per-class results table below]
+Grouping by ground truth:
+- interview: 1 true (pos 0), predicted interview ✓        → 1/1
+- solo:      2 true (pos 1,2); pos1 pred interview ✗, pos2 pred solo ✓ → 1/2
+- panel:     1 true (pos 3), predicted panel ✓            → 1/1
+- narrative: 1 true (pos 4), predicted panel ✗            → 0/1
 
 label       correct  total  accuracy
 ----------  -------  -----  --------
-interview   [blank]  [blank]  [blank]
-solo        [blank]  [blank]  [blank]
-panel       [blank]  [blank]  [blank]
-narrative   [blank]  [blank]  [blank]
+interview      1       1      1.0
+solo           1       2      0.5
+panel          1       1      1.0
+narrative      0       1      0.0
 ```
 
 ---
