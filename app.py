@@ -1,6 +1,9 @@
+import json
+import os
 import gradio as gr
+from config import DATA_PATH, TEST_FILE
 from classifier import classify_episode, load_labeled_examples
-from evaluate import run_evaluation, format_evaluation_report
+from evaluate import format_evaluation_report
 
 # ---------------------------------------------------------------------------
 # Example descriptions for the UI
@@ -97,19 +100,116 @@ def fill_example(title: str, description: str) -> tuple[str, str]:
     return title, description
 
 
-def run_eval() -> str:
+def run_eval():
+    """
+    Generator that streams evaluation progress to the front end, updating after
+    every episode instead of only when the whole run finishes.
+    """
     labeled_examples = load_labeled_examples()
     if not labeled_examples:
-        return (
+        yield (
             "⚠️  No labeled examples found.\n\n"
             "Complete Milestone 1 first: open data/my_labels.json and add labels "
             "for the training episodes."
         )
+        return
+
+    test_path = os.path.join(DATA_PATH, TEST_FILE)
+    with open(test_path, encoding="utf-8") as f:
+        test_episodes = json.load(f)
+    total = len(test_episodes)
+
     print("\n--- Running evaluation ---")
-    eval_results = run_evaluation()
-    report = format_evaluation_report(eval_results)
+    results = []
+    for i, episode in enumerate(test_episodes, start=1):
+        print(f"  Classifying: {episode['title'][:60]}...")
+        prediction = classify_episode(episode["description"], labeled_examples)
+        # An API failure (e.g. rate limit) surfaces as label "unknown" with an
+        # error reasoning — distinct from the model genuinely picking "unknown".
+        api_error = (
+            prediction["label"] == "unknown"
+            and prediction["reasoning"].startswith("Classification error:")
+        )
+        is_correct = (not api_error) and prediction["label"] == episode["label"]
+        results.append({
+            "id": episode["id"],
+            "title": episode["title"],
+            "description": episode["description"],
+            "ground_truth": episode["label"],
+            "predicted": prediction["label"],
+            "reasoning": prediction["reasoning"],
+            "correct": is_correct,
+            "api_error": api_error,
+        })
+
+        # Build a live, growing progress view after each episode.
+        errors = sum(r["api_error"] for r in results)
+        scored = i - errors
+        correct_so_far = sum(r["correct"] for r in results)
+        acc = f"{correct_so_far}/{scored} ({correct_so_far / scored:.0%})" if scored else "—"
+        lines = [
+            f"### ⏳ Evaluating… {i}/{total}",
+            "",
+            f"**Accuracy so far:** {acc}"
+            + (f"  ·  ⚠️ **{errors} API error(s)**" if errors else ""),
+            "",
+            "| # | Result | Truth → Predicted | Episode |",
+            "|---|---|---|---|",
+        ]
+        for n, r in enumerate(results, start=1):
+            if r["api_error"]:
+                mark, pred = "⚠️", "API error"
+            else:
+                mark, pred = ("✅" if r["correct"] else "❌"), r["predicted"]
+            lines.append(
+                f"| {n} | {mark} | {r['ground_truth']} → {pred} "
+                f"| {r['title'][:48]} |"
+            )
+        if i < total:
+            lines.append(f"\n_Classifying {i + 1}/{total}…_")
+        yield "\n".join(lines)
+
+    # If calls failed because of the API (rate limit etc.), say so plainly —
+    # a 0% report would otherwise look like a broken classifier.
+    error_count = sum(r["api_error"] for r in results)
+    if error_count:
+        banner = [
+            f"### ⚠️ {error_count}/{total} episodes could not be classified",
+            "",
+            "These failed on the **Groq API**, not in your classifier — most "
+            "likely the free-tier **daily token limit (100k/day)**. The sample "
+            "error was:",
+            "",
+            f"> {results[[r['api_error'] for r in results].index(True)]['reasoning'][:240]}",
+            "",
+        ]
+        if error_count == total:
+            banner.append(
+                "**Every call failed, so there is no accuracy to report yet.** "
+                "Wait for the daily limit to reset (it refills gradually) and "
+                "re-run — your labels and classifier are unchanged."
+            )
+            print("--- Evaluation aborted: all calls hit the API limit ---\n")
+            yield "\n".join(banner)
+            return
+        banner.append(
+            "The report below scores only the episodes that **did** classify; "
+            "the failed ones are excluded, not counted as wrong."
+        )
+        prefix = "\n".join(banner) + "\n\n---\n\n"
+    else:
+        prefix = ""
+
+    # Final report scores only successfully-classified episodes.
+    scored_results = [r for r in results if not r["api_error"]]
+    eval_results = {
+        "results": scored_results,
+        "predictions": [r["predicted"] for r in scored_results],
+        "ground_truth": [r["ground_truth"] for r in scored_results],
+        "total": len(scored_results),
+    }
     print("--- Evaluation complete ---\n")
-    return report
+    yield prefix + format_evaluation_report(eval_results)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +257,9 @@ Before the classifier works, you need to complete the milestones:
                         label="Episode title (optional — for your reference)",
                         placeholder="e.g. Chef Marcus Lin on What Restaurant Culture Gets Wrong About Burnout",
                         lines=1,
+                        # Without this, Gradio renders the box read-only because
+                        # it's only ever an event *output* (never an input).
+                        interactive=True,
                     )
                     description_box = gr.Textbox(
                         label="Episode description",

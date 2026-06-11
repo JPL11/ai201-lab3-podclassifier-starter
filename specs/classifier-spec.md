@@ -237,14 +237,18 @@ any labels you're unsure about. Annotation quality is part of the lab.
 **Test: what does the raw LLM response look like for one episode?**
 
 ```
-The model follows the requested format closely, e.g.:
+Episode: "Marine Biologist Dr. Amara Diallo on What Coral Bleaching Actually
+Looks Like" (ground truth: interview)
 
+Raw response text:
     Label: interview
-    Reasoning: The host speaks with one guest (Dr. Priya Nair) in a clear
-    question-and-answer dynamic, drawing out her expertise.
+    Reasoning: The episode features a host speaking with a single guest, Dr.
+    Amara Diallo, in a question-and-answer dynamic, indicating a host-guest
+    interview structure. The description highlights the conversation and
+    discussion between the host and Dr. Diallo, further supporting the
+    interview format.
 
-(Exact raw text to be re-captured on the next run — the diagnostic call to
-grab it hit Groq's free-tier daily token cap; see the unknown note below.)
+The model follows the requested "Label: / Reasoning:" format exactly.
 ```
 
 **How did you parse the label out of the response?**
@@ -259,12 +263,12 @@ all parse correctly; "storytelling vibes" correctly yields "unknown".
 **Did any episodes return `"unknown"`? If so, why?**
 
 ```
-Yes — 3 of the 5 narrative test episodes (the LAST three processed). NOT a
-parsing or model failure: interview/solo/panel scored 100% (15/15) and 2
-narrative episodes classified correctly. The 3 unknowns were the final calls in
-the 20-call eval, which hit Groq's free-tier daily token limit (100k tokens/
-day). classify_episode() catches the 429 and returns "unknown" by design. A
-re-run after the limit resets should put narrative at ~4–5/5.
+On the clean run (after the daily token limit reset): NO — 0 unknowns, 100%
+(20/20), all four classes 5/5. An earlier run showed 3 narrative "unknown"s,
+but those were the final calls hitting Groq's free-tier daily token cap (100k/
+day) — classify_episode() catches the 429 and returns "unknown" by design, not
+a parsing or model failure. Once tokens refreshed, narrative went to 5/5,
+confirming it was infrastructure, not the classifier.
 ```
 
 **One thing about the output format that surprised you:**
