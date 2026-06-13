@@ -78,7 +78,7 @@ Opens the Gradio UI: classify a single description interactively, or run the ful
 ## Project Structure
 
 ```
-ai201-lab3-podclassifier-starter/
+podclassifier/
 ├── app.py                   # Gradio UI: single classify + live eval
 ├── classifier.py            # Few-shot prompt construction + Groq classification
 ├── evaluate.py              # Overall + per-class accuracy
